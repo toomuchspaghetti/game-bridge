@@ -68,25 +68,21 @@ def main():
                             if ready_socket is packet_connection:
                                 packet_buffer += packet_connection.recv(1024)
 
-                                decoded_packet_and_buffer = decode_packet(packet_buffer)
+                                while (decoded_packet_and_buffer := decode_packet(packet_buffer)) != None:
+                                    decoded_packet, packet_buffer = decoded_packet_and_buffer
+                                    ip_address, port, data = decoded_packet
 
-                                if decoded_packet_and_buffer == None:
-                                    continue
+                                    gamer_address = f"{ip_address}:{port}"
 
-                                decoded_packet, packet_buffer = decoded_packet_and_buffer
-                                ip_address, port, data = decoded_packet
+                                    #print(f"{gamer_address} <=== {len(data)}")
 
-                                gamer_address = f"{ip_address}:{port}"
+                                    if gamer_address not in game_sockets_by_gamer_address:
+                                        print(f"new socket for {gamer_address}")
+                                        new_game_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                                        new_game_socket.connect((LOCALHOST, udp_port))
+                                        game_sockets_by_gamer_address[gamer_address] = new_game_socket
 
-                                #print(f"{gamer_address} <=== {len(data)}")
-
-                                if gamer_address not in game_sockets_by_gamer_address:
-                                    print(f"new socket for {gamer_address}")
-                                    new_game_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                                    new_game_socket.connect((LOCALHOST, udp_port))
-                                    game_sockets_by_gamer_address[gamer_address] = new_game_socket
-
-                                game_sockets_by_gamer_address[gamer_address].sendall(data)
+                                    game_sockets_by_gamer_address[gamer_address].sendall(data)
                             else:
                                 for new_gamer_address, game_socket in game_sockets_by_gamer_address.items():
                                     if game_socket is ready_socket:
@@ -144,14 +140,10 @@ def main():
                         elif ready_socket is transmission_socket:
                             transmission_buffer += transmission_socket.recv(1024)
 
-                            decoded_packet_and_buffer = decode_packet(transmission_buffer)
+                            while (decoded_packet_and_buffer := decode_packet(transmission_buffer)) != None:
+                                decoded_packet, transmission_buffer = decoded_packet_and_buffer
+                                ip_address, port, data = decoded_packet
 
-                            if decoded_packet_and_buffer == None:
-                                continue
-
-                            decoded_packet, transmission_buffer = decoded_packet_and_buffer
-                            ip_address, port, data = decoded_packet
-
-                            listening_socket.sendto(data, (ip_address, port))
+                                listening_socket.sendto(data, (ip_address, port))
 if __name__ == "__main__":
     main()
