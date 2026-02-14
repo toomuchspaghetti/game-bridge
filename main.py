@@ -1,19 +1,29 @@
 from typing import Optional, Final
+from ipaddress import IPv4Address
+import struct
 
-def get_packet(gamer_ip_address: str, gamer_port: int, data: bytes) -> bytes:
-    return (f"{gamer_ip_address}~~~{gamer_port}~~~{len(data)}~~~").encode() + data
+GAMER_ADDRESS_FORMAT: Final = "!IH"
+NUMBER_OF_BYTES_IN_GAMER_ADDRESS: Final = 6
 
-def decode_packet(buffer: bytes) -> Optional[tuple[tuple[str, int, bytes], bytes]]:
-    parts = buffer.split(b"~~~", 3)
+def get_packet(gamer_ip_address: IPv4Address, gamer_port: int, data: bytes) -> bytes:
+    gamer_address = struct.pack(GAMER_ADDRESS_FORMAT, int(gamer_ip_address), gamer_port)
+    return gamer_address + f"~{len(data)}~".encode() + data
 
-    if len(parts) < 4:
+def decode_packet(buffer: bytes) -> Optional[tuple[tuple[IPv4Address, int, bytes], bytes]]:
+    try:
+        gamer_address = struct.unpack(GAMER_ADDRESS_FORMAT, buffer[:NUMBER_OF_BYTES_IN_GAMER_ADDRESS])
+    
+        ip_address = IPv4Address(gamer_address[0])
+        port = gamer_address[1]
+    
+        length_and_rest = buffer[NUMBER_OF_BYTES_IN_GAMER_ADDRESS:]
+        parts = length_and_rest.split(b"~", 2)
+
+        length = int(parts[1])
+        rest = parts[2]
+    except Exception:
         return
-
-    ip_address = parts[0].decode()
-    port = int(parts[1].decode())
-    length = int(parts[2].decode())
-    rest = parts[3]
-
+    
     if len(rest) < length:
         return
 
@@ -44,6 +54,7 @@ def main():
     server: Final = args.server
 
     LOCALHOST: Final = "127.0.0.1"
+    EVERYWHERE: Final = "0.0.0.0"
 
     if server:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as packet_socket:
@@ -86,12 +97,12 @@ def main():
                             else:
                                 for new_gamer_address, game_socket in game_sockets_by_gamer_address.items():
                                     if game_socket is ready_socket:
-                                        ip_address, port = new_gamer_address.split(":")
-                                        port = int(port)
+                                        ip_address, port_as_string = new_gamer_address.split(":")
+                                        port = int(port_as_string)
 
                                         data = game_socket.recv(4096)
 
-                                        packet_connection.sendall(get_packet(ip_address, port, data))
+                                        packet_connection.sendall(get_packet(IPv4Address(ip_address), port, data))
 
                                         break
                 except KeyboardInterrupt:
@@ -100,50 +111,56 @@ def main():
                     import traceback
                     traceback.print_exc()
 
+                print("closing game sockets...")
+
                 for game_socket in game_sockets_by_gamer_address.values():
                     game_socket.close()
     else:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as transmission_socket:
-            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listening_socket:
-                transmission_addr = (LOCALHOST, tcp_port)
-                try:
-                    transmission_socket.connect(transmission_addr)
-                except Exception:
-                    print(f"cannot connect to tcp bridge. port: {tcp_port}")
-                    exit(1)
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as transmission_socket:
+                with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as listening_socket:
+                    transmission_addr = (LOCALHOST, tcp_port)
+                    try:
+                        transmission_socket.connect(transmission_addr)
+                    except Exception:
+                        print(f"cannot connect to tcp bridge. port: {tcp_port}")
+                        exit(1)
 
-                print(f"tcp bridge established with: {transmission_addr}")
+                    print(f"tcp bridge established with: {transmission_addr}")
 
-                try:
-                    listening_socket.bind((LOCALHOST, udp_port))
-                except Exception:
-                    print(f"cannot bind udp socket to port {udp_port}")
-                    exit(1)
+                    try:
+                        listening_socket.bind((EVERYWHERE, udp_port))
+                    except Exception:
+                        print(f"cannot bind udp socket to port {udp_port}")
+                        exit(1)
 
-                transmission_buffer = bytes()
+                    transmission_buffer = bytes()
 
-                while True:
-                    ready_sockets, _, _ = select.select([transmission_socket, listening_socket], [], [])
+                    while True:
+                        ready_sockets, _, _ = select.select([transmission_socket, listening_socket], [], [])
 
-                    for ready_socket in ready_sockets:
-                        if ready_socket is listening_socket:
-                            data, addr = listening_socket.recvfrom(4096)
+                        for ready_socket in ready_sockets:
+                            if ready_socket is listening_socket:
+                                data, addr = listening_socket.recvfrom(4096)
 
-                            if not data:
-                                continue
+                                if not data:
+                                    continue
 
-                            ip_address = addr[0]
-                            port = addr[1]
+                                ip_address = IPv4Address(addr[0])
+                                port: int = addr[1]
 
-                            transmission_socket.sendall(get_packet(ip_address, port, data))
-                            #print(addr)
-                        elif ready_socket is transmission_socket:
-                            transmission_buffer += transmission_socket.recv(1024)
+                                transmission_socket.sendall(get_packet(ip_address, port, data))
+                                #print(addr)
+                            elif ready_socket is transmission_socket:
+                                transmission_buffer += transmission_socket.recv(1024)
 
-                            while (decoded_packet_and_buffer := decode_packet(transmission_buffer)) != None:
-                                decoded_packet, transmission_buffer = decoded_packet_and_buffer
-                                ip_address, port, data = decoded_packet
+                                while (decoded_packet_and_buffer := decode_packet(transmission_buffer)) != None:
+                                    decoded_packet, transmission_buffer = decoded_packet_and_buffer
+                                    ip_address, port, data = decoded_packet
 
-                                listening_socket.sendto(data, (ip_address, port))
+                                    listening_socket.sendto(data, (str(ip_address), port))
+        except KeyboardInterrupt:
+            pass
+
 if __name__ == "__main__":
     main()
