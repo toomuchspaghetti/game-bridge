@@ -6,7 +6,7 @@ if you can't port forward but you have a crappy VPS you can SSH into, you can fo
 
 ### for factorio:
 
-1. on the machine that hosts game server:
+1. on the machine that hosts the game server:
 
     `python3 main.py --server -P 34197 -p 12345`
 
